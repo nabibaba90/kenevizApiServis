@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Keneviz — Hızlı Doğrulama</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <style>
+    :root{ --bg:#060116; --card:#0e0920; --accent1:#00f6ff; --accent2:#ff00d6; --ok:#66ff99; }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial;color:#e6f7ff;background:linear-gradient(180deg,var(--bg),#120427); -webkit-font-smoothing:antialiased}
+
+    .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+    .card{width:520px;max-width:94vw;border-radius:14px;padding:20px;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03);box-shadow:0 18px 60px rgba(0,0,0,0.6);display:flex;flex-direction:column;gap:14px;align-items:center}
+
+    /* Minimal header */
+    .brand{display:flex;align-items:center;gap:12px}
+    .logo{width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--accent1),var(--accent2));display:flex;align-items:center;justify-content:center;font-weight:900;color:#001}
+    h1{font-size:18px;color:var(--accent1);margin:0}
+    .hint{font-size:13px;color:#cfeffd;margin:0;opacity:0.9}
+
+    /* big circular widget */
+    .circle-wrap{display:flex;align-items:center;justify-content:center;position:relative;margin:8px 0}
+    .circle{width:150px;height:150px;border-radius:50%;background:radial-gradient(circle at 30% 30%, rgba(255,255,255,0.03), rgba(255,255,255,0.01));border:4px solid rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .18s ease, box-shadow .18s ease}
+    .circle:active{transform:scale(.98)}
+    .circle-inner{width:92px;height:92px;border-radius:50%;background:linear-gradient(135deg,var(--accent1),var(--accent2));display:flex;align-items:center;justify-content:center;font-weight:900;color:#001;font-size:18px}
+
+    /* spinner */
+    .spinner{width:86px;height:86px;border-radius:50%;border:6px solid rgba(255,255,255,0.08);border-top-color:var(--ok);animation:spin 1s linear infinite;display:none}
+    .circle.busy .circle-inner{display:none}
+    .circle.busy .spinner{display:block}
+
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    .subtext{font-size:13px;color:#bfeeff;opacity:0.9;text-align:center}
+    .small{font-size:12px;color:#9fdfff;opacity:0.85}
+
+    /* responsive smaller circle on mobile */
+    @media(max-width:420px){ .circle{width:120px;height:120px} .circle-inner{width:72px;height:72px;font-size:16px}} 
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" role="main" aria-labelledby="title">
+      <div class="brand">
+        <div class="logo">KV</div>
+        <div>
+          <h1 id="title">Keneviz Doğrulama</h1>
+          <p class="hint">Tek tıkla başlar — arka planda sağlam kontroller.</p>
+        </div>
+      </div>
+
+      <div class="circle-wrap">
+        <div id="keneviz-circle" class="circle" role="button" aria-pressed="false" tabindex="0" title="Doğrulamak için tıkla">
+          <div class="circle-inner" id="circle-label">Doğrula</div>
+          <div class="spinner" id="circle-spinner" aria-hidden="true"></div>
+        </div>
+      </div>
+
+      <div class="subtext" id="kv-status">Lütfen butona tıklayın. Doğrulama birkaç saniye sürebilir.</div>
+      <div class="small">Tarayıcı verileri ve davranış analizi kullanılır — gelişmiş botlar zor geçer.</div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const circle = document.getElementById('keneviz-circle');
+  const label = document.getElementById('circle-label');
+  const spinner = document.getElementById('circle-spinner');
+  const status = document.getElementById('kv-status');
+
+  // lightweight fingerprint + behaviour
+  function collectQuick(){
+    return {
+      ua: navigator.userAgent || '',
+      webdriver: !!navigator.webdriver,
+      hw: navigator.hardwareConcurrency||0,
+      screen: {w:screen.width,h:screen.height},
+      touch: ('ontouchstart' in window) || (navigator.maxTouchPoints && navigator.maxTouchPoints>0),
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone||'',
+      ts: Date.now()
+    };
+  }
+
+  function setBusy(b){
+    if(b){ circle.classList.add('busy'); circle.setAttribute('aria-pressed','true'); label.style.display='none'; spinner.style.display='block'; status.textContent='Doğrulama başlıyor...'}
+    else { circle.classList.remove('busy'); circle.setAttribute('aria-pressed','false'); label.style.display='flex'; spinner.style.display='none'; }
+  }
+
+  async function getChallenge(){
+    const res = await fetch('/keneviz_challenge',{method:'POST',credentials:'same-origin'});
+    if(!res.ok) throw new Error('challenge');
+    return res.json();
+  }
+
+  async function verify(ch, meta){
+    const res = await fetch('/keneviz_verify',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body: JSON.stringify(Object.assign({}, ch, {client_meta: meta}))});
+    if(!res.ok) return res.json().catch(()=>({success:false}));
+    return res.json();
+  }
+
+  async function run(){
+    try{
+      setBusy(true);
+      // tiny random delay to emulate human
+      await new Promise(r=>setTimeout(r,120+Math.random()*250));
+
+      const pre = collectQuick();
+      if(pre.webdriver){ status.textContent='Bot benzer tarayıcı tespit edildi — reddedildi.'; setBusy(false); return; }
+
+      status.textContent='Sunucudan challenge alınıyor...';
+      const ch = await getChallenge();
+
+      status.textContent='Tarayıcı analizi yapılıyor...';
+      // small behaviour sampling for 300ms
+      const behaviour = await new Promise(r=>{
+        const moves = [];
+        function mm(e){ moves.push(1); }
+        window.addEventListener('mousemove', mm, {passive:true});
+        setTimeout(()=>{ window.removeEventListener('mousemove', mm); r({moves:moves.length}); }, 300);
+      });
+
+      const client_meta = Object.assign({}, pre, behaviour);
+
+      status.textContent='Sunucuya doğrulama gönderiliyor...';
+      const ok = await verify(ch, client_meta);
+      if(ok && ok.success){
+        status.textContent='Doğrulama başarılı — yönlendiriliyorsun...';
+        // trigger global event so server flow can redirect if needed
+        window.dispatchEvent(new CustomEvent('keneviz-verified',{detail:{token: ok.verification_token}}));
+        // give time for cookie to be set by server then reload/redirect
+        setTimeout(()=>{
+          const params = new URLSearchParams(window.location.search);
+          const nxt = params.get('next') || '/';
+          window.location = nxt;
+        },450);
+        return;
+      } else {
+        status.textContent='Doğrulama başarısız veya şüpheli.';
+        setBusy(false);
+      }
+
+    }catch(err){
+      console.error(err);
+      status.textContent='Doğrulama hatası — tekrar deneyin.';
+      setBusy(false);
+    }
+  }
+
+  circle.addEventListener('click', run);
+  circle.addEventListener('keydown', function(e){ if(e.key==='Enter' || e.key===' ') run(); });
+
+})();
+</script>
+</body>
+</html>
